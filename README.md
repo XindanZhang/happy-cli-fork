@@ -30,6 +30,34 @@ This will:
 - `happy daemon` – Manage background service
 - `happy doctor` – System diagnostics & troubleshooting
 
+## Rebuild & reinstall this fork (keep using the Happy mobile app)
+
+The iOS/Android app talks to the CLI via Happy’s server; your auth + device pairing is stored in `~/.happy`, so you can swap the CLI binary without re-pairing.
+
+From this repo:
+
+```bash
+cd <path-to-this-repo>
+
+# Install deps (we used npm here; yarn also works if you have it)
+npm install --no-package-lock
+
+# Build dist/
+npm run build
+
+# Reinstall globally into the same Node prefix that your current `happy` uses (nvm-safe)
+HAPPY_PREFIX="$(cd "$(dirname "$(command -v happy)")/.." && pwd)"
+npm install -g --prefix "$HAPPY_PREFIX" --force .
+hash -r
+
+# Restart the background daemon so it picks up the new code
+happy daemon stop
+happy daemon start
+happy daemon status
+```
+
+To verify you’re running the fork, `happy daemon status` should show the daemon command using your local checkout’s `dist/index.mjs` (not a global package path).
+
 ## Options
 
 - `-h, --help` - Show help
