@@ -8,11 +8,14 @@ type CodexSettings = {
     model?: string
     permissionMode?: PermissionMode
     profile?: string
+    reasoningEffort?: string
 }
 
 type CodexModelHints = {
     defaultModel?: string
     migratedModel?: string
+    defaultReasoningEffort?: string
+    profiles?: string[]
 }
 
 interface CodexDisplayProps {
@@ -45,10 +48,13 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
 
     const [settingsOpen, setSettingsOpen] = useState<boolean>(() => Boolean(initialShowSettings))
     const [settingsSelection, setSettingsSelection] = useState<number>(0)
-    const [editingField, setEditingField] = useState<'model' | 'profile' | null>(null)
+    const [activePicker, setActivePicker] = useState<null | 'model' | 'profile' | 'reasoningEffort'>(null)
+    const [pickerSelection, setPickerSelection] = useState<number>(0)
+    const [editingField, setEditingField] = useState<'model' | 'profile' | 'reasoningEffort' | null>(null)
     const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode>(() => settings?.permissionMode || 'default')
     const [draftModel, setDraftModel] = useState<string>(() => settings?.model || '')
     const [draftProfile, setDraftProfile] = useState<string>(() => settings?.profile || '')
+    const [draftReasoningEffort, setDraftReasoningEffort] = useState<string>(() => settings?.reasoningEffort || '')
     const [draftTextInput, setDraftTextInput] = useState<string>('')
 
     const permissionModeOptions: Array<{ value: PermissionMode; label: string; description: string }> = [
@@ -77,6 +83,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     const settingsItems = [
         { key: 'permissionMode' as const, label: 'Permission mode' },
         { key: 'model' as const, label: 'Model' },
+        { key: 'reasoningEffort' as const, label: 'Thinking mode' },
         { key: 'profile' as const, label: 'Profile' },
         { key: 'save' as const, label: 'Save & close' },
         { key: 'cancel' as const, label: 'Cancel' },
@@ -86,9 +93,12 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         const base = initial || {}
         setDraftPermissionMode(base.permissionMode || 'default')
         setDraftModel(base.model || '')
+        setDraftReasoningEffort(base.reasoningEffort || '')
         setDraftProfile(base.profile || '')
         setDraftTextInput('')
         setEditingField(null)
+        setActivePicker(null)
+        setPickerSelection(0)
         setSettingsSelection(0)
         setSettingsOpen(true)
     }, [])
@@ -96,6 +106,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     const closeSettings = useCallback(() => {
         setSettingsOpen(false)
         setEditingField(null)
+        setActivePicker(null)
         setDraftTextInput('')
     }, [])
 
@@ -118,8 +129,9 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         if (settingsOpen) return
         setDraftPermissionMode(settings?.permissionMode || 'default')
         setDraftModel(settings?.model || '')
+        setDraftReasoningEffort(settings?.reasoningEffort || '')
         setDraftProfile(settings?.profile || '')
-    }, [settingsOpen, settings?.permissionMode, settings?.model, settings?.profile])
+    }, [settingsOpen, settings?.permissionMode, settings?.model, settings?.reasoningEffort, settings?.profile])
 
     const resetConfirmation = useCallback(() => {
         setConfirmationMode(false)
@@ -148,8 +160,125 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     const normalizeSettings = useCallback((): CodexSettings => ({
         permissionMode: draftPermissionMode,
         model: draftModel.trim() ? draftModel.trim() : undefined,
+        reasoningEffort: draftReasoningEffort.trim() ? draftReasoningEffort.trim() : undefined,
         profile: draftProfile.trim() ? draftProfile.trim() : undefined,
-    }), [draftPermissionMode, draftModel, draftProfile])
+    }), [draftPermissionMode, draftModel, draftReasoningEffort, draftProfile])
+
+    type PickerOption = { value: string; label: string; description?: string }
+    const CUSTOM_PICKER_VALUE = '__custom__'
+
+    const getModelPickerOptions = useCallback((): PickerOption[] => {
+        const options: PickerOption[] = []
+        const seen = new Set<string>()
+        const pushUnique = (opt: PickerOption) => {
+            if (seen.has(opt.value)) return
+            seen.add(opt.value)
+            options.push(opt)
+        }
+
+        const codexDefault = modelHints?.defaultModel
+        const codexSuggested = modelHints?.migratedModel
+        pushUnique({
+            value: '',
+            label: '(default)',
+            description: codexDefault ? `Uses Codex default (${codexDefault}).` : 'Uses Codex default.'
+        })
+        if (codexSuggested) {
+            pushUnique({ value: codexSuggested, label: codexSuggested, description: 'Suggested by Codex migration notices.' })
+        }
+        if (codexDefault) {
+            pushUnique({ value: codexDefault, label: codexDefault, description: 'Current Codex default model.' })
+        }
+
+        const current = draftModel.trim()
+        if (current) {
+            pushUnique({ value: current, label: `${current} (current)`, description: 'Your current selection.' })
+        }
+
+        pushUnique({ value: CUSTOM_PICKER_VALUE, label: 'Custom…', description: 'Type a model name manually.' })
+        return options
+    }, [draftModel, modelHints])
+
+    const getProfilePickerOptions = useCallback((): PickerOption[] => {
+        const options: PickerOption[] = []
+        const seen = new Set<string>()
+        const pushUnique = (opt: PickerOption) => {
+            if (seen.has(opt.value)) return
+            seen.add(opt.value)
+            options.push(opt)
+        }
+
+        const profiles = modelHints?.profiles || []
+        pushUnique({ value: '', label: '(default)', description: 'Uses Codex default profile.' })
+        for (const profileName of profiles) {
+            pushUnique({ value: profileName, label: profileName })
+        }
+
+        const current = draftProfile.trim()
+        if (current) {
+            pushUnique({ value: current, label: `${current} (current)` })
+        }
+
+        pushUnique({ value: CUSTOM_PICKER_VALUE, label: 'Custom…', description: 'Type a profile name manually.' })
+        return options
+    }, [draftProfile, modelHints])
+
+    const getReasoningEffortPickerOptions = useCallback((): PickerOption[] => {
+        const options: PickerOption[] = []
+        const seen = new Set<string>()
+        const pushUnique = (opt: PickerOption) => {
+            if (seen.has(opt.value)) return
+            seen.add(opt.value)
+            options.push(opt)
+        }
+
+        const codexDefault = modelHints?.defaultReasoningEffort
+        pushUnique({
+            value: '',
+            label: '(default)',
+            description: codexDefault ? `Uses Codex default (${codexDefault}).` : 'Uses Codex default.'
+        })
+        for (const value of ['low', 'medium', 'high', 'xhigh'] as const) {
+            pushUnique({ value, label: value })
+        }
+        if (codexDefault) {
+            pushUnique({ value: codexDefault, label: `${codexDefault} (default)` })
+        }
+
+        const current = draftReasoningEffort.trim()
+        if (current) {
+            pushUnique({ value: current, label: `${current} (current)` })
+        }
+
+        pushUnique({ value: CUSTOM_PICKER_VALUE, label: 'Custom…', description: 'Type a reasoning effort value manually.' })
+        return options
+    }, [draftReasoningEffort, modelHints])
+
+    const openPicker = useCallback((picker: NonNullable<typeof activePicker>) => {
+        const options = picker === 'model'
+            ? getModelPickerOptions()
+            : picker === 'profile'
+                ? getProfilePickerOptions()
+                : getReasoningEffortPickerOptions()
+
+        const currentValue = picker === 'model'
+            ? draftModel.trim()
+            : picker === 'profile'
+                ? draftProfile.trim()
+                : draftReasoningEffort.trim()
+
+        const index = options.findIndex(opt => opt.value === currentValue)
+        setPickerSelection(index >= 0 ? index : 0)
+        setActivePicker(picker)
+    }, [
+        activePicker,
+        draftModel,
+        draftProfile,
+        draftReasoningEffort,
+        getModelPickerOptions,
+        getProfilePickerOptions,
+        getReasoningEffortPickerOptions,
+    ])
 
     useInput(useCallback(async (input, key) => {
         // Don't process input if action is in progress
@@ -186,6 +315,8 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                         setDraftModel(value)
                     } else if (editingField === 'profile') {
                         setDraftProfile(value)
+                    } else if (editingField === 'reasoningEffort') {
+                        setDraftReasoningEffort(value)
                     }
                     setEditingField(null)
                     setDraftTextInput('')
@@ -198,6 +329,57 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                 if (typeof input === 'string' && input.length > 0 && !key.ctrl && !key.meta) {
                     setDraftTextInput(prev => prev + input)
                 }
+                return
+            }
+
+            // Picker (model/profile/reasoning effort)
+            if (activePicker) {
+                const options = activePicker === 'model'
+                    ? getModelPickerOptions()
+                    : activePicker === 'profile'
+                        ? getProfilePickerOptions()
+                        : getReasoningEffortPickerOptions()
+
+                if (key.escape || input === 's') {
+                    setActivePicker(null)
+                    return
+                }
+                if (key.upArrow) {
+                    setPickerSelection(prev => (prev - 1 + options.length) % options.length)
+                    return
+                }
+                if (key.downArrow) {
+                    setPickerSelection(prev => (prev + 1) % options.length)
+                    return
+                }
+                if (key.return) {
+                    const choice = options[pickerSelection]
+                    if (!choice) {
+                        setActivePicker(null)
+                        return
+                    }
+
+                    if (choice.value === CUSTOM_PICKER_VALUE) {
+                        setEditingField(activePicker)
+                        if (activePicker === 'model') setDraftTextInput(draftModel)
+                        if (activePicker === 'profile') setDraftTextInput(draftProfile)
+                        if (activePicker === 'reasoningEffort') setDraftTextInput(draftReasoningEffort)
+                        setActivePicker(null)
+                        return
+                    }
+
+                    if (activePicker === 'model') {
+                        setDraftModel(choice.value)
+                    } else if (activePicker === 'profile') {
+                        setDraftProfile(choice.value)
+                    } else if (activePicker === 'reasoningEffort') {
+                        setDraftReasoningEffort(choice.value)
+                    }
+
+                    setActivePicker(null)
+                    return
+                }
+
                 return
             }
 
@@ -231,13 +413,15 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                     return
                 }
                 if (selected === 'model') {
-                    setEditingField('model')
-                    setDraftTextInput(draftModel)
+                    openPicker('model')
+                    return
+                }
+                if (selected === 'reasoningEffort') {
+                    openPicker('reasoningEffort')
                     return
                 }
                 if (selected === 'profile') {
-                    setEditingField('profile')
-                    setDraftTextInput(draftProfile)
+                    openPicker('profile')
                     return
                 }
                 if (selected === 'cancel') {
@@ -282,6 +466,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
             resetConfirmation()
         }
     }, [
+        activePicker,
         actionInProgress,
         actionLabel,
         closeSettings,
@@ -289,13 +474,19 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         cyclePermissionMode,
         draftModel,
         draftProfile,
+        draftReasoningEffort,
         draftTextInput,
         editingField,
+        getModelPickerOptions,
+        getProfilePickerOptions,
+        getReasoningEffortPickerOptions,
         messageBuffer,
         normalizeSettings,
         onExit,
         onUpdateSettings,
+        openPicker,
         openSettings,
+        pickerSelection,
         permissionModeOptions,
         resetConfirmation,
         setConfirmationWithTimeout,
@@ -334,32 +525,110 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
 
     const renderSettings = () => {
         const selectedKey = settingsItems[settingsSelection]?.key
+        const currentPickerSelection = Math.max(0, pickerSelection)
 
         const valueFor = (key: typeof settingsItems[number]['key']): string => {
             if (key === 'permissionMode') return draftPermissionMode
             if (key === 'model') return draftModel.trim() ? draftModel : '(default)'
+            if (key === 'reasoningEffort') return draftReasoningEffort.trim() ? draftReasoningEffort : '(default)'
             if (key === 'profile') return draftProfile.trim() ? draftProfile : '(default)'
             return ''
         }
 
         const modelHintText = (() => {
-            const bits: string[] = ['Leave empty to use Codex default model.']
+            const bits: string[] = ['Enter to choose from a list, or pick Custom to type.']
             if (modelHints?.defaultModel) {
-                bits.push(`Detected default: ${modelHints.defaultModel}`)
+                bits.push(`Codex default: ${modelHints.defaultModel}`)
             }
             if (modelHints?.migratedModel) {
                 bits.push(`Suggested: ${modelHints.migratedModel}`)
             }
-            bits.push('To browse models: run `codex` and use `/model`.');
             return bits.join(' ')
         })()
 
+        const reasoningHintText = (() => {
+            const bits: string[] = ['Enter to choose thinking mode (reasoning effort).']
+            if (modelHints?.defaultReasoningEffort) {
+                bits.push(`Codex default: ${modelHints.defaultReasoningEffort}`)
+            }
+            bits.push('Options: low | medium | high | xhigh.')
+            return bits.join(' ')
+        })()
+
+        const profileHintText = (() => {
+            const profiles = modelHints?.profiles || []
+            if (profiles.length === 0) {
+                return 'Enter to choose a profile (none detected). Leave default unless you created one in Codex config.'
+            }
+            const preview = profiles.slice(0, 3).join(', ')
+            const suffix = profiles.length > 3 ? '…' : ''
+            return `Enter to choose a profile. Detected: ${preview}${suffix}`
+        })()
+
+        const renderPicker = () => {
+            const pickerTitle = activePicker === 'model'
+                ? 'Choose model'
+                : activePicker === 'profile'
+                    ? 'Choose profile'
+                    : 'Choose thinking mode'
+
+            const options = activePicker === 'model'
+                ? getModelPickerOptions()
+                : activePicker === 'profile'
+                    ? getProfilePickerOptions()
+                    : getReasoningEffortPickerOptions()
+
+            const safeIndex = Math.min(currentPickerSelection, Math.max(0, options.length - 1))
+            const focused = options[safeIndex]
+
+            return (
+                <Box flexDirection="column">
+                    <Box flexDirection="column" marginBottom={1}>
+                        <Text bold color="cyan">{pickerTitle}</Text>
+                        <Text color="gray" dimColor>↑/↓ to choose • Enter to select • Esc to go back</Text>
+                    </Box>
+
+                    <Box flexDirection="column" marginBottom={1}>
+                        {options.map((opt, idx) => {
+                            const selected = idx === safeIndex
+                            const prefix = selected ? '› ' : '  '
+                            return (
+                                <Text key={`${activePicker}-${opt.value || 'default'}-${idx}`} color={selected ? 'yellow' : 'white'} bold={selected}>
+                                    {prefix}{opt.label}
+                                </Text>
+                            )
+                        })}
+                    </Box>
+
+                    <Box flexDirection="column">
+                        <Text color="gray" dimColor>{'─'.repeat(Math.min(terminalWidth - 4, 60))}</Text>
+                        {focused?.description ? (
+                            <Text color="gray" dimColor>{focused.description}</Text>
+                        ) : null}
+                        {activePicker === 'model' ? (
+                            <Text color="gray" dimColor>{modelHintText}</Text>
+                        ) : activePicker === 'reasoningEffort' ? (
+                            <Text color="gray" dimColor>{reasoningHintText}</Text>
+                        ) : activePicker === 'profile' ? (
+                            <Text color="gray" dimColor>{profileHintText}</Text>
+                        ) : null}
+                    </Box>
+                </Box>
+            )
+        }
+
+        if (activePicker) {
+            return renderPicker()
+        }
+
         const helpText = (() => {
             if (editingField === 'model') return `Editing model: Enter to save • Esc to cancel • ${modelHintText}`
+            if (editingField === 'reasoningEffort') return `Editing thinking mode: Enter to save • Esc to cancel • ${reasoningHintText}`
             if (editingField === 'profile') return 'Editing profile: Enter to save • Esc to cancel'
             if (selectedKey === 'permissionMode') return currentSelectedPermissionMode?.description || ''
             if (selectedKey === 'model') return modelHintText
-            if (selectedKey === 'profile') return 'Leave empty to use Codex default profile.'
+            if (selectedKey === 'reasoningEffort') return reasoningHintText
+            if (selectedKey === 'profile') return profileHintText
             if (selectedKey === 'save') return 'Applies these defaults for new turns/sessions.'
             return 'Esc or s to close without saving.'
         })()
@@ -378,6 +647,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
 
                         const isEditingThis =
                             (item.key === 'model' && editingField === 'model') ||
+                            (item.key === 'reasoningEffort' && editingField === 'reasoningEffort') ||
                             (item.key === 'profile' && editingField === 'profile')
 
                         const value = isEditingThis ? `${draftTextInput}_` : valueFor(item.key)
@@ -467,7 +737,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                         </Text>
                     ) : settingsOpen ? (
                         <Text color="yellow" bold>
-                            Settings • Enter to select • Esc to close
+                            {activePicker ? 'Settings • Enter to select • Esc to go back' : 'Settings • Enter to select • Esc to close'}
                         </Text>
                     ) : confirmationMode ? (
                         <Text color="red" bold>

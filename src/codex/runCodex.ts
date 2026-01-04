@@ -74,6 +74,7 @@ export async function runCodex(opts: {
     interface EnhancedMode {
         permissionMode: PermissionMode;
         model?: string;
+        reasoningEffort?: string;
         profile?: string;
     }
 
@@ -147,6 +148,7 @@ export async function runCodex(opts: {
     const messageQueue = new MessageQueue2<EnhancedMode>((mode) => hashObject({
         permissionMode: mode.permissionMode,
         model: mode.model,
+        reasoningEffort: mode.reasoningEffort,
         profile: mode.profile,
     }));
 
@@ -158,6 +160,7 @@ export async function runCodex(opts: {
     })();
     let currentPermissionMode: PermissionMode | undefined = opts.permissionMode ?? persistedPermissionMode;
     let currentModel: string | undefined = opts.model ?? settings?.codex?.model;
+    let currentReasoningEffort: string | undefined = settings?.codex?.reasoningEffort;
     let currentProfile: string | undefined = opts.profile ?? settings?.codex?.profile;
     const codexModelHints = readCodexModelHints();
 
@@ -187,6 +190,19 @@ export async function runCodex(opts: {
             logger.debug(`[Codex] User message received with no model override, using current: ${currentModel || 'default'}`);
         }
 
+        // Resolve reasoning effort; explicit null resets to default (undefined)
+        let messageReasoningEffort = currentReasoningEffort;
+        const metaAny: any = message.meta as any;
+        if (metaAny && (Object.prototype.hasOwnProperty.call(metaAny, 'reasoningEffort')
+            || Object.prototype.hasOwnProperty.call(metaAny, 'model_reasoning_effort')
+            || Object.prototype.hasOwnProperty.call(metaAny, 'modelReasoningEffort'))) {
+            messageReasoningEffort = metaAny.reasoningEffort || metaAny.model_reasoning_effort || metaAny.modelReasoningEffort || undefined;
+            currentReasoningEffort = messageReasoningEffort;
+            logger.debug(`[Codex] Reasoning effort updated from user message: ${messageReasoningEffort || 'reset to default'}`);
+        } else {
+            logger.debug(`[Codex] User message received with no reasoning effort override, using current: ${currentReasoningEffort || 'default'}`);
+        }
+
         // Resolve profile; explicit null resets to default (undefined)
         let messageProfile = currentProfile;
         if (message.meta?.hasOwnProperty('profile')) {
@@ -200,6 +216,7 @@ export async function runCodex(opts: {
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode || 'default',
             model: messageModel,
+            reasoningEffort: messageReasoningEffort,
             profile: messageProfile,
         };
         messageQueue.push(message.content.text, enhancedMode);
@@ -340,6 +357,7 @@ export async function runCodex(opts: {
         const defaults: string[] = [];
         if (currentModel) defaults.push(`model=${currentModel}`);
         if (currentPermissionMode) defaults.push(`permission-mode=${currentPermissionMode}`);
+        if (currentReasoningEffort) defaults.push(`thinking=${currentReasoningEffort}`);
         if (currentProfile) defaults.push(`profile=${currentProfile}`);
         if (defaults.length > 0) {
             messageBuffer.addMessage(`Defaults: ${defaults.join(' ')}`, 'system');
@@ -354,6 +372,7 @@ export async function runCodex(opts: {
             settings: {
                 model: currentModel,
                 permissionMode: currentPermissionMode,
+                reasoningEffort: currentReasoningEffort,
                 profile: currentProfile,
             },
             modelHints: codexModelHints,
@@ -362,6 +381,7 @@ export async function runCodex(opts: {
                 // Update runtime defaults
                 currentModel = next.model;
                 currentPermissionMode = next.permissionMode;
+                currentReasoningEffort = next.reasoningEffort;
                 currentProfile = next.profile;
 
                 // Persist defaults for future runs
@@ -372,6 +392,7 @@ export async function runCodex(opts: {
                         configured: true,
                         model: next.model,
                         permissionMode: next.permissionMode,
+                        reasoningEffort: next.reasoningEffort,
                         profile: next.profile,
                     }
                 }));
@@ -379,6 +400,7 @@ export async function runCodex(opts: {
                 const updatedDefaults: string[] = [];
                 if (currentModel) updatedDefaults.push(`model=${currentModel}`);
                 if (currentPermissionMode) updatedDefaults.push(`permission-mode=${currentPermissionMode}`);
+                if (currentReasoningEffort) updatedDefaults.push(`thinking=${currentReasoningEffort}`);
                 if (currentProfile) updatedDefaults.push(`profile=${currentProfile}`);
                 if (updatedDefaults.length > 0) {
                     messageBuffer.addMessage(`Defaults updated: ${updatedDefaults.join(' ')}`, 'system');
@@ -723,6 +745,9 @@ export async function runCodex(opts: {
                     };
                     if (message.mode.model) {
                         startConfig.model = message.mode.model;
+                    }
+                    if (message.mode.reasoningEffort) {
+                        (startConfig.config as any).model_reasoning_effort = message.mode.reasoningEffort;
                     }
                     if (message.mode.profile) {
                         startConfig.profile = message.mode.profile;

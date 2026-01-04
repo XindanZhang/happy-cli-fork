@@ -23,6 +23,7 @@ interface Settings {
     configured?: boolean
     model?: string
     permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo'
+    reasoningEffort?: string
     profile?: string
   }
 }

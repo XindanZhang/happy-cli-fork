@@ -5,6 +5,8 @@ import { join } from 'node:path';
 export type CodexModelHints = {
   defaultModel?: string;
   migratedModel?: string;
+  defaultReasoningEffort?: string;
+  profiles?: string[];
 };
 
 function parseQuotedString(value: string): string | null {
@@ -39,6 +41,19 @@ function extractDefaultModel(toml: string): string | undefined {
   return undefined;
 }
 
+function extractDefaultReasoningEffort(toml: string): string | undefined {
+  const lines = toml.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) return undefined; // top-level section ended
+    const match = trimmed.match(/^model_reasoning_effort\s*=\s*(.+)\s*$/);
+    if (!match) continue;
+    return parseQuotedString(match[1]) || undefined;
+  }
+  return undefined;
+}
+
 function extractModelMigrations(toml: string): Record<string, string> {
   const migrations: Record<string, string> = {};
   const lines = toml.split('\n');
@@ -61,14 +76,32 @@ function extractModelMigrations(toml: string): Record<string, string> {
   return migrations;
 }
 
+function extractProfiles(toml: string): string[] {
+  const profiles = new Set<string>();
+  const lines = toml.split('\n');
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const match = line.match(/^\[(profiles|profile)\.(.+)\]$/);
+    if (!match) continue;
+
+    const rawName = match[2].trim();
+    const name = parseQuotedString(rawName) || rawName;
+    if (name) profiles.add(name);
+  }
+  return Array.from(profiles).sort((a, b) => a.localeCompare(b));
+}
+
 export function readCodexModelHints(): CodexModelHints {
   const toml = readCodexConfigToml();
   if (!toml) return {};
 
   const defaultModel = extractDefaultModel(toml);
+  const defaultReasoningEffort = extractDefaultReasoningEffort(toml);
   const migrations = extractModelMigrations(toml);
   const migratedModel = defaultModel ? migrations[defaultModel] : undefined;
+  const profiles = extractProfiles(toml);
 
-  return { defaultModel, migratedModel };
+  return { defaultModel, migratedModel, defaultReasoningEffort, profiles };
 }
-
