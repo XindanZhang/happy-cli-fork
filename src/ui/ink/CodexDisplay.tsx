@@ -10,11 +10,17 @@ type CodexSettings = {
     profile?: string
 }
 
+type CodexModelHints = {
+    defaultModel?: string
+    migratedModel?: string
+}
+
 interface CodexDisplayProps {
     messageBuffer: MessageBuffer
     logPath?: string
     onExit?: () => void
     settings?: CodexSettings
+    modelHints?: CodexModelHints
     initialShowSettings?: boolean
     onUpdateSettings?: (settings: CodexSettings) => void | Promise<void>
 }
@@ -24,6 +30,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     logPath,
     onExit,
     settings,
+    modelHints,
     initialShowSettings,
     onUpdateSettings,
 }) => {
@@ -339,7 +346,16 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
             if (editingField === 'model') return 'Editing model: Enter to save • Esc to cancel'
             if (editingField === 'profile') return 'Editing profile: Enter to save • Esc to cancel'
             if (selectedKey === 'permissionMode') return currentSelectedPermissionMode?.description || ''
-            if (selectedKey === 'model') return 'Leave empty to use Codex default model (from config/profile).'
+            if (selectedKey === 'model') {
+                const bits: string[] = ['Leave empty to use Codex default model.']
+                if (modelHints?.defaultModel) {
+                    bits.push(`Detected default: ${modelHints.defaultModel}`)
+                }
+                if (modelHints?.migratedModel) {
+                    bits.push(`Suggested: ${modelHints.migratedModel}`)
+                }
+                return bits.join(' ')
+            }
             if (selectedKey === 'profile') return 'Leave empty to use Codex default profile.'
             if (selectedKey === 'save') return 'Applies these defaults for new turns/sessions.'
             return 'Esc or s to close without saving.'

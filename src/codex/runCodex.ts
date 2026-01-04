@@ -28,6 +28,7 @@ import { notifyDaemonSessionStarted } from "@/daemon/controlClient";
 import { registerKillSessionHandler } from "@/claude/registerKillSessionHandler";
 import { delay } from "@/utils/time";
 import { stopCaffeinate } from "@/utils/caffeinate";
+import { readCodexModelHints } from "./utils/codexConfig";
 
 type PermissionMode = 'default' | 'read-only' | 'safe-yolo' | 'yolo';
 
@@ -158,6 +159,7 @@ export async function runCodex(opts: {
     let currentPermissionMode: PermissionMode | undefined = opts.permissionMode ?? persistedPermissionMode;
     let currentModel: string | undefined = opts.model ?? settings?.codex?.model;
     let currentProfile: string | undefined = opts.profile ?? settings?.codex?.profile;
+    const codexModelHints = readCodexModelHints();
 
     session.onUserMessage((message) => {
         // Resolve permission mode (validate)
@@ -354,6 +356,7 @@ export async function runCodex(opts: {
                 permissionMode: currentPermissionMode,
                 profile: currentProfile,
             },
+            modelHints: codexModelHints,
             initialShowSettings,
             onUpdateSettings: async (next) => {
                 // Update runtime defaults
