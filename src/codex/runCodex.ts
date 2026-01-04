@@ -29,6 +29,8 @@ import { registerKillSessionHandler } from "@/claude/registerKillSessionHandler"
 import { delay } from "@/utils/time";
 import { stopCaffeinate } from "@/utils/caffeinate";
 
+type PermissionMode = 'default' | 'read-only' | 'safe-yolo' | 'yolo';
+
 type ReadyEventOptions = {
     pending: unknown;
     queueSize: () => number;
@@ -63,8 +65,10 @@ export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, not
 export async function runCodex(opts: {
     credentials: Credentials;
     startedBy?: 'daemon' | 'terminal';
+    model?: string;
+    permissionMode?: PermissionMode;
+    profile?: string;
 }): Promise<void> {
-    type PermissionMode = 'default' | 'read-only' | 'safe-yolo' | 'yolo';
     interface EnhancedMode {
         permissionMode: PermissionMode;
         model?: string;
@@ -143,8 +147,9 @@ export async function runCodex(opts: {
     }));
 
     // Track current overrides to apply per message
-    let currentPermissionMode: PermissionMode | undefined = undefined;
-    let currentModel: string | undefined = undefined;
+    let currentPermissionMode: PermissionMode | undefined = opts.permissionMode;
+    let currentModel: string | undefined = opts.model;
+    const sessionProfile: string | undefined = opts.profile;
 
     session.onUserMessage((message) => {
         // Resolve permission mode (validate)
@@ -311,6 +316,13 @@ export async function runCodex(opts: {
 
     if (hasTTY) {
         console.clear();
+        const defaults: string[] = [];
+        if (currentModel) defaults.push(`model=${currentModel}`);
+        if (currentPermissionMode) defaults.push(`permission-mode=${currentPermissionMode}`);
+        if (sessionProfile) defaults.push(`profile=${sessionProfile}`);
+        if (defaults.length > 0) {
+            messageBuffer.addMessage(`Defaults: ${defaults.join(' ')}`, 'system');
+        }
         inkInstance = render(React.createElement(CodexDisplay, {
             messageBuffer,
             logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
@@ -644,6 +656,9 @@ export async function runCodex(opts: {
                     };
                     if (message.mode.model) {
                         startConfig.model = message.mode.model;
+                    }
+                    if (sessionProfile) {
+                        startConfig.profile = sessionProfile;
                     }
                     
                     // Check for resume file from multiple sources

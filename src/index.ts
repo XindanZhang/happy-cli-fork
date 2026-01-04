@@ -88,16 +88,83 @@ import { execFileSync } from 'node:child_process'
       
       // Parse startedBy argument
       let startedBy: 'daemon' | 'terminal' | undefined = undefined;
+      let codexModel: string | undefined = undefined;
+      let codexPermissionMode: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | undefined = undefined;
+      let codexProfile: string | undefined = undefined;
+      let showCodexHelp = false;
       for (let i = 1; i < args.length; i++) {
-        if (args[i] === '--started-by') {
-          startedBy = args[++i] as 'daemon' | 'terminal';
+        const arg = args[i];
+
+        if (arg === '-h' || arg === '--help') {
+          showCodexHelp = true;
+          continue;
         }
+
+        if (arg === '--started-by') {
+          startedBy = args[++i] as 'daemon' | 'terminal';
+          continue;
+        }
+
+        if (arg === '-m' || arg === '--model') {
+          const value = args[++i];
+          if (!value) {
+            console.error(chalk.red('Error:'), 'Missing value for --model');
+            process.exit(1);
+          }
+          codexModel = value;
+          continue;
+        }
+
+        if (arg === '--permission-mode') {
+          const value = args[++i];
+          if (!value) {
+            console.error(chalk.red('Error:'), 'Missing value for --permission-mode');
+            process.exit(1);
+          }
+          codexPermissionMode = z.enum(['default', 'read-only', 'safe-yolo', 'yolo']).parse(value);
+          continue;
+        }
+
+        if (arg === '-p' || arg === '--profile') {
+          const value = args[++i];
+          if (!value) {
+            console.error(chalk.red('Error:'), 'Missing value for --profile');
+            process.exit(1);
+          }
+          codexProfile = value;
+          continue;
+        }
+
+        console.error(chalk.red('Error:'), `Unknown argument: ${arg}`);
+        showCodexHelp = true;
+        break;
+      }
+
+      if (showCodexHelp) {
+        console.log(`
+${chalk.bold('happy codex')} - Codex mode (mobile-controlled)
+
+${chalk.bold('Usage:')}
+  happy codex [options]
+
+${chalk.bold('Options:')}
+  -h, --help                         Show this help
+  -m, --model <MODEL>                Codex model to use for this session
+  --permission-mode <MODE>           default | read-only | safe-yolo | yolo
+  -p, --profile <PROFILE>            Codex config profile name
+  --started-by <daemon|terminal>     Internal (used by daemon)
+
+${chalk.bold('Notes:')}
+  - If you don’t pass --model, Codex uses its default (typically from ~/.codex/config.toml).
+  - The mobile app can still override model/permissions per-message.
+`)
+        process.exit(0);
       }
       
       const {
         credentials
       } = await authAndSetupMachineIfNeeded();
-      await runCodex({credentials, startedBy});
+      await runCodex({credentials, startedBy, model: codexModel, permissionMode: codexPermissionMode, profile: codexProfile});
       // Do not force exit here; allow instrumentation to show lingering handles
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
