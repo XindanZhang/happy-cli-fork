@@ -480,7 +480,9 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                 return
             }
             if (key.backspace || key.delete) {
-                if (key.delete && !key.backspace) {
+                // Some terminals report Backspace as `delete`; treat it as backspace unless
+                // we have a real forward-delete (cursor not at end).
+                if (key.delete && !key.backspace && promptCursor < promptDraft.length) {
                     deletePromptForward()
                 } else {
                     deletePromptBackward()
