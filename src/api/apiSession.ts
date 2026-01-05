@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger'
 import { EventEmitter } from 'node:events'
 import { io, Socket } from 'socket.io-client'
-import { AgentState, ClientToServerEvents, MessageContent, Metadata, ServerToClientEvents, Session, Update, UserMessage, UserMessageSchema, Usage } from './types'
+import { AgentState, ClientToServerEvents, MessageContent, MessageMeta, Metadata, ServerToClientEvents, Session, Update, UserMessage, UserMessageSchema, Usage } from './types'
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { configuration } from '@/configuration';
@@ -240,6 +240,31 @@ export class ApiSessionClient extends EventEmitter {
             // TODO: Consider implementing message queue or HTTP fallback for reliability
         }
         
+        this.socket.emit('message', {
+            sid: this.sessionId,
+            message: encrypted
+        });
+    }
+
+    sendUserMessage(text: string, meta?: MessageMeta) {
+        const content: MessageContent = {
+            role: 'user',
+            content: {
+                type: 'text',
+                text
+            },
+            meta: {
+                sentFrom: 'cli',
+                ...meta
+            }
+        };
+
+        const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
+
+        if (!this.socket.connected) {
+            logger.debug('[API] Socket not connected, cannot send user message. Message will be lost');
+        }
+
         this.socket.emit('message', {
             sid: this.sessionId,
             message: encrypted

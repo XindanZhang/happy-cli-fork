@@ -22,6 +22,10 @@ interface CodexDisplayProps {
     messageBuffer: MessageBuffer
     logPath?: string
     onExit?: () => void
+    mode?: 'local' | 'remote'
+    onSubmitPrompt?: (prompt: string) => void | Promise<void>
+    onSwitchToLocal?: () => void | Promise<void>
+    onSwitchToRemote?: () => void | Promise<void>
     settings?: CodexSettings
     modelHints?: CodexModelHints
     initialShowSettings?: boolean
@@ -32,6 +36,10 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     messageBuffer,
     logPath,
     onExit,
+    mode = 'remote',
+    onSubmitPrompt,
+    onSwitchToLocal,
+    onSwitchToRemote,
     settings,
     modelHints,
     initialShowSettings,
@@ -56,6 +64,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     const [draftProfile, setDraftProfile] = useState<string>(() => settings?.profile || '')
     const [draftReasoningEffort, setDraftReasoningEffort] = useState<string>(() => settings?.reasoningEffort || '')
     const [draftTextInput, setDraftTextInput] = useState<string>('')
+    const [promptDraft, setPromptDraft] = useState<string>('')
 
     const permissionModeOptions: Array<{ value: PermissionMode; label: string; description: string }> = [
         {
@@ -132,6 +141,12 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         setDraftReasoningEffort(settings?.reasoningEffort || '')
         setDraftProfile(settings?.profile || '')
     }, [settingsOpen, settings?.permissionMode, settings?.model, settings?.reasoningEffort, settings?.profile])
+
+    useEffect(() => {
+        if (mode === 'remote') {
+            setPromptDraft('')
+        }
+    }, [mode])
 
     const resetConfirmation = useCallback(() => {
         setConfirmationMode(false)
@@ -286,6 +301,11 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         
         // Handle Ctrl-C - exits the agent directly instead of switching modes
         if (key.ctrl && input === 'c') {
+            if (!settingsOpen && mode === 'remote' && onSwitchToLocal) {
+                resetConfirmation()
+                await onSwitchToLocal()
+                return
+            }
             if (confirmationMode) {
                 // Second Ctrl-C, exit
                 resetConfirmation()
@@ -296,6 +316,63 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
             } else {
                 // First Ctrl-C, show confirmation
                 setConfirmationWithTimeout()
+            }
+            return
+        }
+
+        // Local prompt input (terminal mode)
+        if (!settingsOpen && mode === 'local') {
+            if (key.escape) {
+                setPromptDraft('')
+                return
+            }
+            if (key.return) {
+                const trimmed = promptDraft.trim()
+                if (!trimmed) {
+                    setPromptDraft('')
+                    return
+                }
+
+                if (trimmed === '/settings' || trimmed === '/s') {
+                    openSettings(settings)
+                    setPromptDraft('')
+                    return
+                }
+
+                if (trimmed === '/remote') {
+                    setPromptDraft('')
+                    await onSwitchToRemote?.()
+                    return
+                }
+
+                if (trimmed === '/local') {
+                    setPromptDraft('')
+                    await onSwitchToLocal?.()
+                    return
+                }
+
+                if (trimmed === '/exit' || trimmed === '/quit') {
+                    setPromptDraft('')
+                    onExit?.()
+                    return
+                }
+
+                await onSubmitPrompt?.(promptDraft)
+                setPromptDraft('')
+                return
+            }
+            if (key.backspace || key.delete) {
+                setPromptDraft(prev => prev.slice(0, -1))
+                return
+            }
+            if (typeof input === 'string' && input.length > 0 && !key.ctrl && !key.meta) {
+                setPromptDraft(prev => prev + input)
+                return
+            }
+
+            // Any other key cancels confirmation
+            if (confirmationMode) {
+                resetConfirmation()
             }
             return
         }
@@ -456,7 +533,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
             return
         }
 
-        if (input === 's') {
+        if (input === 's' && mode !== 'local') {
             openSettings(settings)
             return
         }
@@ -694,7 +771,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                 overflow="hidden"
             >
                 <Box flexDirection="column" marginBottom={1}>
-                    <Text color="gray" bold>🤖 Codex Agent Messages</Text>
+                    <Text color="gray" bold>{mode === 'local' ? '⌨️ Codex • Local Mode' : '📡 Codex • Remote Mode'}</Text>
                     <Text color="gray" dimColor>{'─'.repeat(Math.min(terminalWidth - 4, 60))}</Text>
                 </Box>
                 
@@ -743,10 +820,19 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                         <Text color="red" bold>
                             ⚠️  Press Ctrl-C again to exit the agent
                         </Text>
+                    ) : mode === 'local' ? (
+                        <>
+                            <Text color="green" bold>
+                                ⌨️  Local mode • Enter to send • /settings • /remote • Ctrl-C to exit
+                            </Text>
+                            <Text color="gray" dimColor>
+                                {`> ${promptDraft}_`}
+                            </Text>
+                        </>
                     ) : (
                         <>
                             <Text color="green" bold>
-                                🤖 Codex Agent Running • s Settings • Ctrl-C to exit
+                                📡 Remote mode • Ctrl-C to take over locally • s Settings
                             </Text>
                         </>
                     )}

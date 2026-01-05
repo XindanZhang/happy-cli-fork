@@ -88,6 +88,7 @@ import { execFileSync } from 'node:child_process'
       
       // Parse startedBy argument
       let startedBy: 'daemon' | 'terminal' | undefined = undefined;
+      let codexStartingMode: 'local' | 'remote' | undefined = undefined;
       let codexModel: string | undefined = undefined;
       let codexPermissionMode: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | undefined = undefined;
       let codexProfile: string | undefined = undefined;
@@ -112,10 +113,12 @@ import { execFileSync } from 'node:child_process'
         }
 
         if (arg === '--happy-starting-mode') {
-          // Internal flag used by the daemon when spawning remote sessions.
-          // Codex mode does not currently use this value, but we accept it so
-          // remote spawns don't fail with "Unknown argument".
-          i++; // consume value (local|remote)
+          const value = args[++i];
+          if (!value) {
+            console.error(chalk.red('Error:'), 'Missing value for --happy-starting-mode');
+            process.exit(1);
+          }
+          codexStartingMode = z.enum(['local', 'remote']).parse(value);
           continue;
         }
 
@@ -173,6 +176,7 @@ ${chalk.bold('Options:')}
   --yolo                             Alias for --permission-mode yolo (full access)
   --settings                         Open an interactive settings menu at startup
   -p, --profile <PROFILE>            Codex config profile name
+  --happy-starting-mode <local|remote> Internal (used by daemon)
   --started-by <daemon|terminal>     Internal (used by daemon)
 
 ${chalk.bold('Notes:')}
@@ -199,7 +203,7 @@ ${chalk.bold('Notes:')}
         await new Promise(resolve => setTimeout(resolve, 200));
       }
 
-      await runCodex({credentials, startedBy, model: codexModel, permissionMode: codexPermissionMode, profile: codexProfile, showSettings: codexShowSettings});
+      await runCodex({credentials, startedBy, startingMode: codexStartingMode, model: codexModel, permissionMode: codexPermissionMode, profile: codexProfile, showSettings: codexShowSettings});
       // Do not force exit here; allow instrumentation to show lingering handles
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')

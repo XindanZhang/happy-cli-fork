@@ -66,6 +66,7 @@ export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, not
 export async function runCodex(opts: {
     credentials: Credentials;
     startedBy?: 'daemon' | 'terminal';
+    startingMode?: 'local' | 'remote';
     model?: string;
     permissionMode?: PermissionMode;
     profile?: string;
@@ -164,7 +165,63 @@ export async function runCodex(opts: {
     let currentProfile: string | undefined = opts.profile ?? settings?.codex?.profile;
     const codexModelHints = readCodexModelHints();
 
+    const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
+    let mode: 'local' | 'remote' = opts.startingMode ?? (opts.startedBy === 'daemon' ? 'remote' : 'local');
+    if (!hasTTY) {
+        mode = 'remote';
+    }
+
+    const messageBuffer = new MessageBuffer();
+    let inkInstance: any = null;
+    let renderRoot: (() => React.ReactElement) | null = null;
+
+    let thinking = false;
+
+    const rerender = () => {
+        if (renderRoot && inkInstance?.rerender) {
+            inkInstance.rerender(renderRoot());
+        }
+    };
+
+    const setMode = async (next: 'local' | 'remote', reason?: string) => {
+        if (!hasTTY) {
+            // Without a TTY there is nothing to "switch" to locally.
+            mode = 'remote';
+            return;
+        }
+        if (next === mode) {
+            return;
+        }
+
+        mode = next;
+
+        if (reason) {
+            messageBuffer.addMessage(reason, 'status');
+        }
+
+        session.sendSessionEvent({ type: 'switch', mode });
+        session.updateAgentState((currentState) => ({
+            ...currentState,
+            controlledByUser: mode === 'local'
+        }));
+        session.keepAlive(thinking, mode);
+        rerender();
+    };
+
     session.onUserMessage((message) => {
+        const sentFrom = message.meta?.sentFrom;
+
+        // Ignore local terminal messages echoed back from the server; we already enqueued them.
+        if (sentFrom === 'terminal') {
+            return;
+        }
+
+        // If the user is typing in the terminal and a mobile message arrives,
+        // switch to remote mode to mirror Claude's "mobile takes over" behavior.
+        if (hasTTY && mode === 'local') {
+            void setMode('remote', 'Mobile message received • switched to remote mode');
+        }
+
         // Resolve permission mode (validate)
         let messagePermissionMode = currentPermissionMode;
         if (message.meta?.permissionMode) {
@@ -221,11 +278,17 @@ export async function runCodex(opts: {
         };
         messageQueue.push(message.content.text, enhancedMode);
     });
-    let thinking = false;
-    session.keepAlive(thinking, 'remote');
+
+    // Set initial agent state for the UI/app.
+    session.updateAgentState((currentState) => ({
+        ...currentState,
+        controlledByUser: mode === 'local'
+    }));
+
+    session.keepAlive(thinking, mode);
     // Periodic keep-alive; store handle so we can clear on exit
     const keepAliveInterval = setInterval(() => {
-        session.keepAlive(thinking, 'remote');
+        session.keepAlive(thinking, mode);
     }, 2000);
 
     const sendReady = () => {
@@ -348,13 +411,10 @@ export async function runCodex(opts: {
     // Initialize Ink UI
     //
 
-    const messageBuffer = new MessageBuffer();
-    const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
-    let inkInstance: any = null;
-
     if (hasTTY) {
         console.clear();
         const defaults: string[] = [];
+        defaults.push(`mode=${mode}`);
         if (currentModel) defaults.push(`model=${currentModel}`);
         if (currentPermissionMode) defaults.push(`permission-mode=${currentPermissionMode}`);
         if (currentReasoningEffort) defaults.push(`thinking=${currentReasoningEffort}`);
@@ -366,9 +426,10 @@ export async function runCodex(opts: {
         const initialShowSettings = (opts.startedBy || 'terminal') === 'terminal'
             && (opts.showSettings || (!settings?.codex?.configured && !opts.model && !opts.permissionMode && !opts.profile));
 
-        const renderRoot = () => React.createElement(CodexDisplay, {
+        renderRoot = () => React.createElement(CodexDisplay, {
             messageBuffer,
             logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
+            mode,
             settings: {
                 model: currentModel,
                 permissionMode: currentPermissionMode,
@@ -377,6 +438,38 @@ export async function runCodex(opts: {
             },
             modelHints: codexModelHints,
             initialShowSettings,
+            onSwitchToLocal: async () => {
+                await setMode('local', 'Switched to local mode');
+            },
+            onSwitchToRemote: async () => {
+                await setMode('remote', 'Switched to remote mode');
+            },
+            onSubmitPrompt: async (prompt) => {
+                const messageText = prompt.trim();
+                if (!messageText) {
+                    return;
+                }
+
+                // Ensure we are in local mode when typing from the terminal.
+                await setMode('local');
+
+                const enhancedMode: EnhancedMode = {
+                    permissionMode: currentPermissionMode || 'default',
+                    model: currentModel,
+                    reasoningEffort: currentReasoningEffort,
+                    profile: currentProfile,
+                };
+
+                // Queue for processing by Codex.
+                messageQueue.pushImmediate(messageText, enhancedMode);
+
+                // Mirror to the server so the mobile app stays in sync.
+                session.sendUserMessage(messageText, {
+                    sentFrom: 'terminal',
+                    permissionMode: enhancedMode.permissionMode,
+                    model: enhancedMode.model ?? undefined,
+                });
+            },
             onUpdateSettings: async (next) => {
                 // Update runtime defaults
                 currentModel = next.model;
@@ -409,7 +502,7 @@ export async function runCodex(opts: {
                 }
 
                 // Refresh UI props for the next time settings are opened
-                inkInstance?.rerender?.(renderRoot());
+                rerender();
             },
             onExit: async () => {
                 // Exit the agent
@@ -523,14 +616,14 @@ export async function runCodex(opts: {
             if (!thinking) {
                 logger.debug('thinking started');
                 thinking = true;
-                session.keepAlive(thinking, 'remote');
+                session.keepAlive(thinking, mode);
             }
         }
         if (msg.type === 'task_complete' || msg.type === 'turn_aborted') {
             if (thinking) {
                 logger.debug('thinking completed');
                 thinking = false;
-                session.keepAlive(thinking, 'remote');
+                session.keepAlive(thinking, mode);
             }
             // Reset diff processor on task end or abort
             diffProcessor.reset();
@@ -707,7 +800,7 @@ export async function runCodex(opts: {
                 reasoningProcessor.abort();
                 diffProcessor.reset();
                 thinking = false;
-                session.keepAlive(thinking, 'remote');
+                session.keepAlive(thinking, mode);
                 continue;
             }
 
@@ -818,7 +911,7 @@ export async function runCodex(opts: {
                 reasoningProcessor.abort();  // Use abort to properly finish any in-progress tool calls
                 diffProcessor.reset();
                 thinking = false;
-                session.keepAlive(thinking, 'remote');
+                session.keepAlive(thinking, mode);
                 emitReadyIfIdle({
                     pending,
                     queueSize: () => messageQueue.size(),
