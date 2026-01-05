@@ -65,6 +65,10 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     const [draftReasoningEffort, setDraftReasoningEffort] = useState<string>(() => settings?.reasoningEffort || '')
     const [draftTextInput, setDraftTextInput] = useState<string>('')
     const [promptDraft, setPromptDraft] = useState<string>('')
+    const [promptCursor, setPromptCursor] = useState<number>(0)
+    const [promptHistory, setPromptHistory] = useState<string[]>([])
+    const [promptHistoryIndex, setPromptHistoryIndex] = useState<number | null>(null)
+    const [promptBeforeHistory, setPromptBeforeHistory] = useState<string>('')
 
     const permissionModeOptions: Array<{ value: PermissionMode; label: string; description: string }> = [
         {
@@ -145,8 +149,56 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
     useEffect(() => {
         if (mode === 'remote') {
             setPromptDraft('')
+            setPromptCursor(0)
+            setPromptHistoryIndex(null)
+            setPromptBeforeHistory('')
         }
     }, [mode])
+
+    const updatePrompt = useCallback((next: string, nextCursor?: number) => {
+        setPromptDraft(next)
+        const cursor = typeof nextCursor === 'number' ? nextCursor : next.length
+        setPromptCursor(Math.max(0, Math.min(cursor, next.length)))
+    }, [])
+
+    const insertPromptText = useCallback((text: string) => {
+        if (!text) return
+        const before = promptDraft.slice(0, promptCursor)
+        const after = promptDraft.slice(promptCursor)
+        updatePrompt(before + text + after, promptCursor + text.length)
+    }, [promptCursor, promptDraft, updatePrompt])
+
+    const deletePromptBackward = useCallback(() => {
+        if (promptCursor <= 0) return
+        const before = promptDraft.slice(0, promptCursor - 1)
+        const after = promptDraft.slice(promptCursor)
+        updatePrompt(before + after, promptCursor - 1)
+    }, [promptCursor, promptDraft, updatePrompt])
+
+    const deletePromptForward = useCallback(() => {
+        if (promptCursor >= promptDraft.length) return
+        const before = promptDraft.slice(0, promptCursor)
+        const after = promptDraft.slice(promptCursor + 1)
+        updatePrompt(before + after, promptCursor)
+    }, [promptCursor, promptDraft, updatePrompt])
+
+    const movePromptCursor = useCallback((delta: number) => {
+        updatePrompt(promptDraft, promptCursor + delta)
+    }, [promptCursor, promptDraft, updatePrompt])
+
+    const movePromptHome = useCallback(() => updatePrompt(promptDraft, 0), [promptDraft, updatePrompt])
+    const movePromptEnd = useCallback(() => updatePrompt(promptDraft, promptDraft.length), [promptDraft, updatePrompt])
+
+    const pushPromptHistory = useCallback((entry: string) => {
+        const trimmed = entry.trim()
+        if (!trimmed) return
+        setPromptHistory((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1] === trimmed) {
+                return prev
+            }
+            return [...prev.slice(-49), trimmed]
+        })
+    }, [])
 
     const resetConfirmation = useCallback(() => {
         setConfirmationMode(false)
@@ -322,14 +374,71 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
 
         // Local prompt input (terminal mode)
         if (!settingsOpen && mode === 'local') {
+            // History navigation
+            if (key.upArrow) {
+                if (promptHistory.length === 0) return
+                if (promptHistoryIndex === null) {
+                    setPromptBeforeHistory(promptDraft)
+                    const nextIndex = promptHistory.length - 1
+                    setPromptHistoryIndex(nextIndex)
+                    updatePrompt(promptHistory[nextIndex] || '', undefined)
+                } else if (promptHistoryIndex > 0) {
+                    const nextIndex = promptHistoryIndex - 1
+                    setPromptHistoryIndex(nextIndex)
+                    updatePrompt(promptHistory[nextIndex] || '', undefined)
+                }
+                return
+            }
+            if (key.downArrow) {
+                if (promptHistory.length === 0) return
+                if (promptHistoryIndex === null) return
+                if (promptHistoryIndex < promptHistory.length - 1) {
+                    const nextIndex = promptHistoryIndex + 1
+                    setPromptHistoryIndex(nextIndex)
+                    updatePrompt(promptHistory[nextIndex] || '', undefined)
+                } else {
+                    setPromptHistoryIndex(null)
+                    updatePrompt(promptBeforeHistory, undefined)
+                }
+                return
+            }
+
+            // Cursor navigation and editing shortcuts
+            if (key.leftArrow) {
+                movePromptCursor(-1)
+                return
+            }
+            if (key.rightArrow) {
+                movePromptCursor(1)
+                return
+            }
+            if (key.ctrl && input === 'a') {
+                movePromptHome()
+                return
+            }
+            if (key.ctrl && input === 'e') {
+                movePromptEnd()
+                return
+            }
+            if (key.ctrl && input === 'u') {
+                updatePrompt('', 0)
+                setPromptHistoryIndex(null)
+                setPromptBeforeHistory('')
+                return
+            }
+
             if (key.escape) {
-                setPromptDraft('')
+                updatePrompt('', 0)
+                setPromptHistoryIndex(null)
+                setPromptBeforeHistory('')
                 return
             }
             if (key.return) {
                 const trimmed = promptDraft.trim()
                 if (!trimmed) {
-                    setPromptDraft('')
+                    updatePrompt('', 0)
+                    setPromptHistoryIndex(null)
+                    setPromptBeforeHistory('')
                     return
                 }
 
@@ -340,33 +449,46 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                 }
 
                 if (trimmed === '/remote') {
-                    setPromptDraft('')
+                    updatePrompt('', 0)
+                    setPromptHistoryIndex(null)
+                    setPromptBeforeHistory('')
                     await onSwitchToRemote?.()
                     return
                 }
 
                 if (trimmed === '/local') {
-                    setPromptDraft('')
+                    updatePrompt('', 0)
+                    setPromptHistoryIndex(null)
+                    setPromptBeforeHistory('')
                     await onSwitchToLocal?.()
                     return
                 }
 
                 if (trimmed === '/exit' || trimmed === '/quit') {
-                    setPromptDraft('')
+                    updatePrompt('', 0)
+                    setPromptHistoryIndex(null)
+                    setPromptBeforeHistory('')
                     onExit?.()
                     return
                 }
 
                 await onSubmitPrompt?.(promptDraft)
-                setPromptDraft('')
+                pushPromptHistory(promptDraft)
+                updatePrompt('', 0)
+                setPromptHistoryIndex(null)
+                setPromptBeforeHistory('')
                 return
             }
             if (key.backspace || key.delete) {
-                setPromptDraft(prev => prev.slice(0, -1))
+                if (key.delete && !key.backspace) {
+                    deletePromptForward()
+                } else {
+                    deletePromptBackward()
+                }
                 return
             }
             if (typeof input === 'string' && input.length > 0 && !key.ctrl && !key.meta) {
-                setPromptDraft(prev => prev + input)
+                insertPromptText(input)
                 return
             }
 
@@ -758,13 +880,56 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
         )
     }
 
+    const innerWidth = Math.max(10, terminalWidth - 6)
+
+    const renderPromptLines = (): string[] => {
+        const cursorSymbol = '▊'
+        const safeCursor = Math.max(0, Math.min(promptCursor, promptDraft.length))
+        const marked = promptDraft.slice(0, safeCursor) + cursorSymbol + promptDraft.slice(safeCursor)
+
+        const firstPrefix = '> '
+        const nextPrefix = '  '
+
+        const chunks: string[] = []
+        const logicalLines = marked.split('\n')
+
+        let isFirst = true
+        for (const logical of logicalLines) {
+            let remaining = logical
+            if (remaining.length === 0) {
+                const prefix = isFirst ? firstPrefix : nextPrefix
+                chunks.push(prefix + '')
+                isFirst = false
+                continue
+            }
+            while (remaining.length > 0) {
+                const prefix = isFirst ? firstPrefix : nextPrefix
+                const maxLen = Math.max(1, innerWidth - prefix.length)
+                chunks.push(prefix + remaining.slice(0, maxLen))
+                remaining = remaining.slice(maxLen)
+                isFirst = false
+            }
+        }
+
+        const maxLines = 4
+        if (chunks.length <= maxLines) {
+            return chunks
+        }
+
+        const tail = chunks.slice(-maxLines)
+        tail[0] = `…${tail[0].slice(1)}`
+        return tail
+    }
+
+    const promptLines = mode === 'local' ? renderPromptLines() : []
+
     return (
         <Box flexDirection="column" width={terminalWidth} height={terminalHeight}>
             {/* Main content area with logs */}
             <Box 
                 flexDirection="column" 
                 width={terminalWidth}
-                height={terminalHeight - 4}
+                flexGrow={1}
                 borderStyle="round"
                 borderColor="gray"
                 paddingX={1}
@@ -775,7 +940,7 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                     <Text color="gray" dimColor>{'─'.repeat(Math.min(terminalWidth - 4, 60))}</Text>
                 </Box>
                 
-                <Box flexDirection="column" height={terminalHeight - 10} overflow="hidden">
+                <Box flexDirection="column" flexGrow={1} overflow="hidden">
                     {settingsOpen ? (
                         renderSettings()
                     ) : messages.length === 0 ? (
@@ -825,9 +990,11 @@ export const CodexDisplay: React.FC<CodexDisplayProps> = ({
                             <Text color="green" bold>
                                 ⌨️  Local mode • Enter to send • /settings • /remote • Ctrl-C to exit
                             </Text>
-                            <Text color="gray" dimColor>
-                                {`> ${promptDraft}_`}
-                            </Text>
+                            {promptLines.map((line, idx) => (
+                                <Text key={`prompt-${idx}`} color="white">
+                                    {line}
+                                </Text>
+                            ))}
                         </>
                     ) : (
                         <>
